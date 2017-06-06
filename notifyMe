@@ -1,0 +1,74 @@
+#!/bin/bash
+
+## The following script will send a notification email to the user once the job is finished
+## Author: Adem Bilican
+## version: 1.0
+
+# get the jobid from the qsub command as standard input
+var=$(< /dev/stdin)
+
+# print the standard qsub output to inform the job submission
+echo $var
+
+# list of users email addresses
+username=$(whoami)
+declare -A mail=( ["USERNAME"]="EMAIL")
+echo "$(tput setaf 1)$(tput bold)notifyMe$(tput sgr0): you will be notified by email at the end of your job to $(tput setaf 1)$(tput bold)${mail[$username]}$(tput sgr0)"
+
+# get job ID
+job_id=$(echo $var | awk '{print $3}')
+
+# command to check the end of the running job
+test_end=$(echo $(qstat) | grep $job_id | wc -l)
+
+# while job is still running
+while [ "$test_end" -eq 1 ]
+do
+        test_end2=$(echo $(qstat) | grep $job_id | wc -l)
+        if [ "$test_end2" -eq 0 ] # if job is finished
+        then
+                sleep 10 # wait until the job moves to qacct
+                # parse the command to return the essential information
+                job_info="$(qacct -j $job_id)"
+                username=$(echo "$job_info" | grep "owner" | awk '{print $2}')
+                jobname=$(echo "$job_info" | grep "jobname" | awk '{print $2}')
+                start_time=$(echo "$job_info" | grep "start_time" | awk '{$1=""; print $0}')
+                end_time=$(echo "$job_info" | grep "end_time" | awk '{$1=""; print $0}')
+                slots=$(echo "$job_info" | grep "slots" | awk '{print $2}')
+                exit_status=$(echo "$job_info" | grep "exit_status" | awk '{print $2}')
+                memory=$(echo "$job_info" | grep "maxvmem" | awk '{print $2}')
+                hostname=$(echo "$job_info" | grep "hostname" | awk '{print $2}')
+                failed=$(echo "$job_info" | grep "failed" | awk '{print $2}')
+
+                # get the exit status to print out in the subject of the notification email
+                if [ $failed == 0 ]; then
+                        exit_message="Done"
+                else
+                        exit_message="Error"
+                fi
+                # formatting the text for the email
+                echo "
+This is the summary for your job with the identifier $job_id
+
+User :            $username
+Job identifier :  $job_id
+Job name :        $jobname
+hostname :        $hostname
+Started at :     $start_time
+Finished at :    $end_time
+Used slots :      $slots
+Used memory :     $memory
+
+             _   _  __
+ _ __   ___ | |_(_)/ _|_   _  /\/\   ___
+| '_ \ / _ \| __| | |_| | | |/    \ / _ \\
+| | | | (_) | |_| |  _| |_| / /\/\ \  __/
+|_| |_|\___/ \__|_|_|  \__, \/    \/\___|
+                       |___/
+notifyMe is provided without warranty, use it with caution...
+
+                " | mailx -r "notifyMe" -s "Job $job_id: <$jobname> in cluster <$hostname> $exit_message" ${mail[$username]}
+
+                break
+        fi
+done &
